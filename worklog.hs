@@ -2,17 +2,19 @@ import Data.Attoparsec.Text.Lazy
 import qualified Data.Attoparsec.Text.Lazy as DAT
 import Control.Applicative
 import System.Environment
-import Data.Text.Lazy hiding (map, concatMap, foldl', unlines)
-import Data.List.Stream
-import Prelude hiding ((++), map, concatMap, unlines)
+import Data.Text.Lazy hiding (map, concatMap, foldl', length)
+import Data.List
+import Prelude hiding ((++), map, concatMap, unlines, length)
 import qualified Data.Text.Lazy.IO
 import Text.Printf
 
+rate = 70
 
-template :: String -> String -> String -> String
-template inv_no company table = unlines [
+template :: String -> String -> Log -> String
+template inv_no company log = Data.List.unlines [
 	"\\documentclass{article}",
 	"\\usepackage{longtable}",
+	"\\usepackage{multirow}",
 	"\\title{TAX INVOICE}",
 	"\\author{Daniel Lagos}",
 	"",
@@ -29,11 +31,17 @@ template inv_no company table = unlines [
 	"\\begin{center}",
 	"\\begin{longtable}{l|l|l|p{2in}}",
 	"\\multicolumn{1}{c}{Date} & \\multicolumn{1}{c}{Times} & \\multicolumn{1}{c}{Hours} & \\multicolumn{1}{c}{Description} \\\\",
-	"\\hline",
-	table,
+	renderLog log,
+	renderTotal $ logMinutes log,
 	"\\end{longtable}",
 	"\\end{center}",
 	"\\end{document}" ]
+
+logMinutes :: Log -> Int
+logMinutes logs = foldl' (+) 0 $ map entryMinutes logs
+
+entryMinutes :: LogEntry -> Int
+entryMinutes (LogEntry _ dts) = foldl' (+) 0 $ map intervalMinutes dts
 
 companies "formbay" = "Formbay Pty Ltd";
 companies "lirrf" = "Lizard Island Reef Research Foundation";
@@ -45,8 +53,7 @@ main = do
 	logFile <- Data.Text.Lazy.IO.readFile $ logFileName
 	case renderTemplate logFile of
 		(Left err) -> putStr $ "Error: " ++ err ++ "\n" -- TODO go to stderr
-		(Right log) -> putStr $ template invoiceNo company $ table log
-	where table log = renderLog log ++ (renderTotal $ logMinutes log)
+		(Right log) -> putStr $ template invoiceNo company log
 
 renderTemplate :: Text -> Either String Log
 renderTemplate logFile = eitherResult $ parse logParser logFile
@@ -69,42 +76,54 @@ data DateTime = DateTime {
 	year :: Int
 } deriving Show
 
-logMinutes :: Log -> Int
-logMinutes logs = foldl' (+) 0 $ map entryMinutes logs
-
-entryMinutes :: LogEntry -> Int
-entryMinutes (LogEntry _ dts) = foldl' (+) 0 $ map intervalMinutes dts
-
 intervalMinutes :: (DateTime, DateTime) -> Int
-intervalMinutes (t1, t2) = ((hour t2 - hour t1) * 60) + (minute t2 - minute t1) -- TODO round up/down based on seconds. make sure to fix displayed minutes too!
+intervalMinutes (t1, t2) = dayMins + hourMins + minMins -- TODO round up/down based on seconds. make sure to fix displayed minutes too!
+	where	dayMins = (date t2 - date t1) * 24 * 60
+		hourMins = (hour t2 - hour t1) * 60
+		minMins = minute t2 - minute t1
 
 renderLog :: Log -> String
 renderLog = concatMap renderEntry
 
 renderEntry :: LogEntry -> String
-renderEntry (LogEntry comment times) = concatMap (renderInterval comment) times
+renderEntry (LogEntry comment (t:ts)) = "\\hline \n" ++ renderInterval1 comment (length (t:ts)) t ++ concatMap renderInterval2 ts
 
-renderInterval :: Text -> (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
-renderInterval comment (t1, t2) = printf "%02d %s &%02d:%02d - %02d:%02d &%d:%02d &%s \\\\\n" (date t1) (unpack $ month t1) (hour t1) (minute t1) (hour t2) (minute t2) (div mins 60) (mod mins 60) (unpack comment)
-	where mins = intervalMinutes (t1, t2)
+renderInterval1 :: Text -> Int -> (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
+renderInterval1 comment rows (t1, t2) = printf "\\multirow{%d}{*}{%02d %s} &%02d:%02d - %02d:%02d &%d:%02d &\\multirow{%d}{*}{%s} \\\\\n" rows (date t1) (unpack $ month t1) (hour t1) (minute t1) (hour t2) (minute t2) (div mins 60) (mod mins 60) rows (unpack comment)
+	where	mins = intervalMinutes (t1, t2)
 
-renderTotal :: Int -> String
-renderTotal mins = printf "\\hline\nTOTAL & @\\$50/hour &%d:%02d &\\$%.02f (excl. GST) \\\\\n" (div mins 60) (mod mins 60) (((fromIntegral mins) / 60.0) * 50 :: Float)
+renderInterval2 :: (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
+renderInterval2 (t1, t2) = printf "\t&%02d:%02d - %02d:%02d &%d:%02d & \\\\\n" (hour t1) (minute t1) (hour t2) (minute t2) (div mins 60) (mod mins 60)
+	where	mins = intervalMinutes (t1, t2)
+
+renderTotal :: Int -> String -- TODO use "rate" instead of hard code $70
+renderTotal mins = printf "\\hline \nTOTAL & @\\$70/hour &%d:%02d &\\$%.02f (excl. GST) \\\\\n" hours minutes dollars
+    where   hours = div mins 60
+            minutes = mod mins 60
+            dollars = ((fromIntegral mins) / 60.0) * rate :: Float -- factorise
+
+-- renderGST :: Int -> String
+-- renderGST mins = printf "\\hline \nGST & &%d:%02d &\\$%.02f GST \\\\\n" gst
+--     where   gst = dollars 
+--             dollars mins = ((fromIntegral mins) / 60.0) * rate :: Float
 
 logParser :: Parser Log
 logParser = ((some logEntryParser) <* endOfInput)
 
 logEntryParser :: Parser LogEntry
 logEntryParser = do
-	comment <- takeTill ('\n' ==) <* endOfLine -- TODO accept multiple line comments?
+	comment <- takeTill ('\n' ==) <* endOfLine
 	times <- some timePairsParser
 	return $ LogEntry (fromStrict comment) times
 
 timePairsParser :: Parser (DateTime, DateTime)
 timePairsParser = do
-	time1 <- timeParser
-	time2 <- timeParser
+	time1 <- timeParser <|> timeParser2
+	time2 <- timeParser <|> timeParser2
 	return (time1, time2)
+
+timezoneParser :: Parser Text
+timezoneParser = fmap fromStrict $ ((DAT.string $ toStrict $ pack "AEST") <|> (DAT.string $ toStrict $ pack "AEDT") <|> (DAT.string $ toStrict $ pack "EST"))
 
 timeParser :: Parser DateTime
 timeParser = do
@@ -114,8 +133,20 @@ timeParser = do
 	hour <- DAT.count 2 digit <* char ':'
 	minute <- DAT.count 2 digit <* char ':'
 	second <- DAT.count 2 digit <* char ' '
-	timezone <- DAT.string (toStrict $ pack "EST") <* char ' '
+	timezone <- timezoneParser <* char ' '
 	year <-  DAT.count 4 digit <* some endOfLine
-	return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) (fromStrict timezone) (read year)
+	return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) timezone (read year)
 	where
 		parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
+
+timeParser2 :: Parser DateTime
+timeParser2 = do
+	day <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
+	date <- (some digit) <* char ' '
+	month <- DAT.takeWhile (inClass "a-zA-Z") <* char ' ' <* char ' '
+	hour <- DAT.count 2 digit <* char ':'
+	minute <- DAT.count 2 digit <* char ':'
+	second <- DAT.count 2 digit <* char ' '
+	timezone <- timezoneParser <* char ' '
+	year <-  DAT.count 4 digit <* some endOfLine
+	return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) timezone (read year)
