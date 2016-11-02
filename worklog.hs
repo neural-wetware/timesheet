@@ -51,10 +51,11 @@ logMinutes logs = foldl' (+) 0 $ map entryMinutes logs
 entryMinutes :: LogEntry -> Int
 entryMinutes (LogEntry _ dts) = foldl' (+) 0 $ map intervalMinutes dts
 
-companies "formbay" = "Formbay Pty Ltd";
-companies "lirrf" = "Lizard Island Reef Research Foundation";
-companies "techsupply" = "Techsupply Pty Ltd";
-companies x = error "invavlid company: " ++ x;
+companies "formbay" = "Formbay Pty Ltd"
+companies "star" = "The Shooting Star Picture Company"
+companies "lirrf" = "Lizard Island Reef Research Foundation"
+companies "techsupply" = "Techsupply Pty Ltd"
+companies x = error "invavlid company: " ++ x
 
 main = do
     [logFileName, invoiceNo, company] <- getArgs 
