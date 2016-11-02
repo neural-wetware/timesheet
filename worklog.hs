@@ -8,6 +8,7 @@ import Prelude hiding ((++), map, concatMap, unlines, length)
 import qualified Data.Text.Lazy.IO
 import Text.Printf
 
+rate :: Int
 rate = 70
 
 template :: String -> String -> Log -> String
@@ -15,7 +16,7 @@ template inv_no company log = Data.List.unlines [
     "\\documentclass{article}",
     "\\usepackage{longtable}",
     "\\usepackage{multirow}",
-    "\\title{TAX INVOICE}",
+    "\\title{INVOICE}",
     "\\author{Daniel Lagos}",
     "",
     "\\begin{document}",
@@ -32,13 +33,13 @@ template inv_no company log = Data.List.unlines [
     "\\begin{longtable}{l|l|l|p{2in}}",
     "\\multicolumn{1}{c}{Date} & \\multicolumn{1}{c}{Times} & \\multicolumn{1}{c}{Hours} & \\multicolumn{1}{c}{Description} \\\\",
     renderLog log,
-    renderTotalHours mins,
+    renderTotalHours mins rate,
     "\\end{longtable}",
     "",
     "\\begin{longtable}{r|r|l}",
     renderTotal mins,
-    renderGST mins,
-    renderAmountPayable mins,
+--  renderGST mins,
+--  renderAmountPayable mins,
     "\\hline",
     "\\end{longtable}",
     "\\end{center}",
@@ -105,12 +106,12 @@ renderInterval2 :: (DateTime, DateTime) -> String -- TODO check that dates match
 renderInterval2 (t1, t2) = printf "\t&%02d:%02d - %02d:%02d &%d:%02d & \\\\\n" (hour t1) (minute t1) (hour t2) (minute t2) (div mins 60) (mod mins 60)
     where    mins = intervalMinutes (t1, t2)
 
-renderTotalHours :: Int -> String -- TODO use "rate" instead of hard code $70
-renderTotalHours mins = printf "\\hline \n & & %d:%02d & @\\$70/hour \\\\\n" hours minutes
+renderTotalHours :: Int -> Int -> String
+renderTotalHours mins rate = printf "\\hline \n & & %d:%02d & @ \\$%d/hour \\\\\n" hours minutes rate
     where   hours = div mins 60
             minutes = mod mins 60
 
-renderTotal :: Int -> String -- TODO use "rate" instead of hard code $70
+renderTotal :: Int -> String
 renderTotal mins = printf "\\hline \nTOTAL & \\$%.02f & excl GST \\\\\n" (dollars mins)
 
 renderGST :: Int -> String
@@ -123,7 +124,7 @@ gst mins = (dollars mins) * 0.10
 
 amount mins = (dollars mins) * 1.10
 
-dollars mins = ((fromIntegral mins) / 60.0) * rate :: Float
+dollars mins = ((fromIntegral mins) / 60.0) * (fromIntegral rate) :: Float
 
 logParser :: Parser Log
 logParser = ((some logEntryParser) <* endOfInput)
