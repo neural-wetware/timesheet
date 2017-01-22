@@ -8,42 +8,10 @@ import Prelude hiding ((++), map, concatMap, unlines, length)
 import qualified Data.Text.Lazy.IO
 import Text.Printf
 
-rate :: Int
-rate = 70
-
-template :: String -> String -> Log -> String
-template inv_no company log = Data.List.unlines [
-    "\\documentclass{article}",
-    "\\usepackage{longtable}",
-    "\\usepackage{multirow}",
-    "\\title{INVOICE}",
-    "\\author{Daniel Lagos}",
-    "",
-    "\\begin{document}",
-    "",
-    "\\maketitle",
-    "\\begin{tabular}{ll}",
-    "Address: 161/3-9 Church Ave, Mascot & Invoice no: " ++ inv_no ++ " \\\\",
-    "Mobile: 0415 205 542 & To: " ++ companies company ++ " \\\\",
-    "ABN: 58 228 211 683 & \\\\",
-    "\\end{tabular}",
-    "",
-    "\\maketitle",
-    "\\begin{center}",
-    "\\begin{longtable}{l|l|l|p{2in}}",
-    "\\multicolumn{1}{c}{Date} & \\multicolumn{1}{c}{Times} & \\multicolumn{1}{c}{Hours} & \\multicolumn{1}{c}{Description} \\\\",
+template :: Log -> String
+template log = Data.List.unlines [
     renderLog log,
-    renderTotalHours mins rate,
-    "\\end{longtable}",
-    "",
-    "\\begin{longtable}{r|r|l}",
-    renderTotal mins,
-    renderGST mins,
-    renderAmountPayable mins,
-    "\\hline",
-    "\\end{longtable}",
-    "\\end{center}",
-    "\\end{document}" ]
+    renderTotalHours mins ]
     where mins = logMinutes log
 
 logMinutes :: Log -> Int
@@ -52,18 +20,12 @@ logMinutes logs = foldl' (+) 0 $ map entryMinutes logs
 entryMinutes :: LogEntry -> Int
 entryMinutes (LogEntry _ dts) = foldl' (+) 0 $ map intervalMinutes dts
 
-companies "formbay" = "Formbay Pty Ltd"
-companies "star" = "The Shooting Star Picture Company"
-companies "lirrf" = "Lizard Island Reef Research Foundation"
-companies "techsupply" = "Techsupply Pty Ltd"
-companies x = error "invavlid company: " ++ x
-
 main = do
-    [logFileName, invoiceNo, company] <- getArgs 
+    [logFileName] <- getArgs 
     logFile <- Data.Text.Lazy.IO.readFile $ logFileName
     case renderTemplate logFile of
         (Left err) -> putStr $ "Error: " ++ err ++ "\n" -- TODO go to stderr
-        (Right log) -> putStr $ template invoiceNo company log
+        (Right log) -> putStr $ template log
 
 renderTemplate :: Text -> Either String Log
 renderTemplate logFile = eitherResult $ parse logParser logFile
@@ -93,38 +55,30 @@ intervalMinutes (t1, t2) = dayMins + hourMins + minMins -- TODO round up/down ba
           minMins = minute t2 - minute t1
 
 renderLog :: Log -> String
-renderLog = concatMap renderEntry
+renderLog l = renderHead ++ concatMap renderEntry l
+
+renderHead :: String
+renderHead = "date, start, finish, total, description\n"
 
 renderEntry :: LogEntry -> String
-renderEntry (LogEntry comment (t:ts)) = "\\hline \n" ++ renderInterval1 comment (length (t:ts)) t ++ concatMap renderInterval2 ts
+renderEntry (LogEntry comment ts) = concatMap (renderInterval1 comment) ts
 
-renderInterval1 :: Text -> Int -> (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
-renderInterval1 comment rows (t1, t2) = printf "\\multirow{%d}{*}{%02d %s} &%02d:%02d - %02d:%02d &%d:%02d &\\multirow{%d}{*}{%s} \\\\\n" rows (date t1) (unpack $ month t1) (hour t1) (minute t1) (hour t2) (minute t2) (div mins 60) (mod mins 60) rows (unpack comment)
-    where    mins = intervalMinutes (t1, t2)
+renderInterval1 :: Text -> (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
+renderInterval1 comment (t1, t2) = printf "%02d %s,%02d:%02d,%02d:%02d,%d:%02d,%s\n" day mon h1 m1 h2 m2 hours minutes (unpack comment)
+    where   mins = intervalMinutes (t1, t2)
+            day = (date t1)
+            mon = (unpack $ month t1)
+            h1 = (hour t1)
+            m1 = (minute t1)
+            h2 = (hour t2)
+            m2 = (minute t2)
+            hours = (div mins 60)
+            minutes = (mod mins 60)
 
-renderInterval2 :: (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
-renderInterval2 (t1, t2) = printf "\t&%02d:%02d - %02d:%02d &%d:%02d & \\\\\n" (hour t1) (minute t1) (hour t2) (minute t2) (div mins 60) (mod mins 60)
-    where    mins = intervalMinutes (t1, t2)
-
-renderTotalHours :: Int -> Int -> String
-renderTotalHours mins rate = printf "\\hline \n & & %d:%02d & @ \\$%d/hour \\\\\n" hours minutes rate
+renderTotalHours :: Int -> String
+renderTotalHours mins = printf ",,,%d:%02d,TOTAL\n" hours minutes
     where   hours = div mins 60
             minutes = mod mins 60
-
-renderTotal :: Int -> String
-renderTotal mins = printf "\\hline \nTOTAL & \\$%.02f & excl GST \\\\\n" (dollars mins)
-
-renderGST :: Int -> String
-renderGST mins = printf "\\hline \nGST & \\$%.02f & \\\\\n" (gst mins)
-
-renderAmountPayable :: Int -> String
-renderAmountPayable mins = printf "\\hline \nAMMOUNT PAYABLE & \\$%.02f & incl GST \\\\\n" (amount mins)
-
-gst mins = (dollars mins) * 0.10
-
-amount mins = (dollars mins) * 1.10
-
-dollars mins = ((fromIntegral mins) / 60.0) * (fromIntegral rate) :: Float
 
 logParser :: Parser Log
 logParser = ((some logEntryParser) <* endOfInput)
