@@ -79,9 +79,8 @@ renderInterval1 comment (t1, t2) = printf "%02d %s,%02d:%02d,%02d:%02d,%d:%02d,%
             minutes = (mod mins 60)
 
 renderTotalHours :: Int -> Text -> String
-renderTotalHours mins id = printf ",,,TOTAL,%d:%02d\n,,,ID,%s\n" hours minutes id
-    where   hours = div mins 60
-            minutes = mod mins 60
+renderTotalHours mins id = printf "TOTAL,%.02f\nID,%s\n" hours id
+    where   hours = (fromIntegral mins) / 60 :: Float
 
 logParser :: Parser Log
 logParser = ((some logEntryParser) <* endOfInput)
