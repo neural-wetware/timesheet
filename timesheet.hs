@@ -1,6 +1,7 @@
 import Data.Attoparsec.Text.Lazy
 import qualified Data.Attoparsec.Text.Lazy as DAT
 import Control.Applicative
+import System.Random
 import System.Environment
 import Data.Text.Lazy hiding (map, concatMap, foldl', length)
 import Data.List
@@ -8,10 +9,10 @@ import Prelude hiding ((++), map, concatMap, unlines, length)
 import qualified Data.Text.Lazy.IO
 import Text.Printf
 
-template :: Log -> String
-template log = Data.List.unlines [
+template :: Log -> Text -> String
+template log id = Data.List.unlines [
     renderLog log,
-    renderTotalHours mins ]
+    renderTotalHours mins id ]
     where mins = logMinutes log
 
 logMinutes :: Log -> Int
@@ -21,11 +22,13 @@ entryMinutes :: LogEntry -> Int
 entryMinutes (LogEntry _ dts) = foldl' (+) 0 $ map intervalMinutes dts
 
 main = do
-    [logFileName] <- getArgs 
+    gen <- getStdGen
+    ints <- randomInts gen
+    [logFileName] <- getArgs
     logFile <- Data.Text.Lazy.IO.readFile $ logFileName
     case renderTemplate logFile of
         (Left err) -> putStr $ "Error: " ++ err ++ "\n" -- TODO go to stderr
-        (Right log) -> putStr $ template log
+        (Right log) -> putStr $ template log (Data.Text.Lazy.take 6 $ base64Chars ints)
 
 renderTemplate :: Text -> Either String Log
 renderTemplate logFile = eitherResult $ parse logParser logFile
@@ -75,8 +78,8 @@ renderInterval1 comment (t1, t2) = printf "%02d %s,%02d:%02d,%02d:%02d,%d:%02d,%
             hours = (div mins 60)
             minutes = (mod mins 60)
 
-renderTotalHours :: Int -> String
-renderTotalHours mins = printf ",,,%d:%02d,TOTAL\n" hours minutes
+renderTotalHours :: Int -> Text -> String
+renderTotalHours mins id = printf ",,,TOTAL,%d:%02d\n,,,ID,%s\n" hours minutes id
     where   hours = div mins 60
             minutes = mod mins 60
 
@@ -123,3 +126,12 @@ timeParser2 = do
     timezone <- timezoneParser <* char ' '
     year <-  DAT.count 4 digit <* some endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) timezone (read year)
+
+base64Chars :: [Int] -> Text
+base64Chars ints = pack $ map (chars !!) ints
+    where chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+randomInts :: StdGen -> IO [Int]
+randomInts gen = do
+    let ints = randomRs (0,63) gen
+    return ints
