@@ -28,7 +28,7 @@ main = do
     logFile <- Data.Text.Lazy.IO.readFile $ logFileName
     case renderTemplate logFile of
         (Left err) -> putStr $ "Error: " ++ err ++ "\n" -- TODO go to stderr
-        (Right log) -> putStr $ template log (Data.Text.Lazy.take 6 $ base64Chars ints)
+        (Right log) -> putStr $ template log (Data.Text.Lazy.take 8 $ base32chars ints)
 
 renderTemplate :: Text -> Either String Log
 renderTemplate logFile = eitherResult $ parse logParser logFile
@@ -126,11 +126,12 @@ timeParser2 = do
     year <-  DAT.count 4 digit <* some endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) timezone (read year)
 
-base64Chars :: [Int] -> Text
-base64Chars ints = pack $ map (chars !!) ints
-    where chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+base32chars :: [Int] -> Text
+base32chars ints = pack $ map (chars !!) ints
+    where chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
 
 randomInts :: StdGen -> IO [Int]
 randomInts gen = do
-    let ints = randomRs (0,63) gen
+    let ints = randomRs (0,31) gen
     return ints
