@@ -1,0 +1,16 @@
+name:                timesheet
+version:             1.0
+license:             BSD3
+license-file:        LICENSE
+author:              Daniel Lagos
+maintainer:          daniel@artemis.mine.nu
+build-type:          Simple
+extra-source-files:  ChangeLog.md
+cabal-version:       >=1.10
+executable timesheet
+  main-is:             Main.hs
+  build-depends:       base < 5,
+                       attoparsec,
+                       text,
+                       random
+  default-language:    Haskell2010
