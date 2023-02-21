@@ -105,12 +105,12 @@ timeParser = do
     day <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
     month <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
     date <- parseDate <* char ' '
-    hour <- DAT.count 2 digit <* char ':'
-    minute <- DAT.count 2 digit <* char ':'
-    second <- DAT.count 2 digit <* char ' '
+    hour <- (boundedDecimal 24) <* char ':'
+    minute <- (boundedDecimal 60) <* char ':'
+    second <- (boundedDecimal 60) <* char ' '
     timezone <- timezoneParser <* char ' '
-    year <-  DAT.count 4 digit <* some endOfLine
-    return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) timezone (read year)
+    year <- (boundedDecimal 3000) <* some endOfLine
+    return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
     where
         parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
 
@@ -119,17 +119,23 @@ timeParser2 = do
     day <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
     date <- (some digit) <* char ' '
     month <- DAT.takeWhile (inClass "a-zA-Z") <* char ' ' <* char ' '
-    hour <- DAT.count 2 digit <* char ':'
-    minute <- DAT.count 2 digit <* char ':'
-    second <- DAT.count 2 digit <* char ' '
+    hour <- (boundedDecimal 24) <* char ':'
+    minute <- (boundedDecimal 60) <* char ':'
+    second <- (boundedDecimal 60) <* char ' '
     timezone <- timezoneParser <* char ' '
-    year <-  DAT.count 4 digit <* some endOfLine
-    return $ DateTime (fromStrict day) (fromStrict month) (read date) (read hour) (read minute) (read second) timezone (read year)
+    year <- (boundedDecimal 3000) <* some endOfLine
+    return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
+
+boundedDecimal :: Int-> Parser Int
+boundedDecimal max = do
+    i <- decimal
+    if (i :: Int) >= max
+        then fail "decimal too big"
+        else return i
 
 base32chars :: [Int] -> Text
 base32chars ints = pack $ map (chars !!) ints
     where chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-
 
 randomInts :: StdGen -> IO [Int]
 randomInts gen = do
