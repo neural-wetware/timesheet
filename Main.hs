@@ -93,12 +93,18 @@ logEntryParser = do
 
 timePairsParser :: Parser (DateTime, DateTime)
 timePairsParser = do
-    time1 <- timeParser <|> timeParser2
-    time2 <- timeParser <|> timeParser2
+    time1 <- timeParser <|> timeParser2 <|> timeParser3
+    time2 <- timeParser <|> timeParser2 <|> timeParser3
     return (time1, time2)
 
 timezoneParser :: Parser Text
 timezoneParser = fmap fromStrict $ ((DAT.string $ toStrict $ pack "AEST") <|> (DAT.string $ toStrict $ pack "AEDT") <|> (DAT.string $ toStrict $ pack "EST"))
+
+ampmParser :: Parser Bool
+ampmParser = fmap (toBool . unpack . fromStrict) $ ((DAT.string $ toStrict $ pack "AM") <|> (DAT.string $ toStrict $ pack "PM"))
+    where
+        toBool "AM" = True
+        toBool "PM" = False
 
 timeParser :: Parser DateTime
 timeParser = do
@@ -126,12 +132,33 @@ timeParser2 = do
     year <- (boundedDecimal 3000) <* some endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
 
+timeParser3 :: Parser DateTime
+timeParser3 = do
+    day <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
+    month <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
+    date <- parseDate <* char ' '
+    hour <- (boundedDecimal 13) <* char ':'
+    minute <- (boundedDecimal 60) <* char ':'
+    second <- (boundedDecimal 60) <* char ' '
+    ampm <- ampmParser <* char ' '
+    timezone <- timezoneParser <* char ' '
+    year <- (boundedDecimal 3000) <* some endOfLine
+    return $ DateTime (fromStrict day) (fromStrict month) (read date) (convertHours ampm hour) minute second timezone year
+    where
+        parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
+
 boundedDecimal :: Int-> Parser Int
 boundedDecimal max = do
     i <- decimal
     if (i :: Int) >= max
         then fail "decimal too big"
         else return i
+
+convertHours :: Bool -> Int -> Int
+convertHours True hours = hours
+convertHours False hours
+    | hours == 12 = hours
+    | otherwise = hours + 12
 
 base32chars :: [Int] -> Text
 base32chars ints = pack $ map (chars !!) ints
