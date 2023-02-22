@@ -93,8 +93,8 @@ logEntryParser = do
 
 timePairsParser :: Parser (DateTime, DateTime)
 timePairsParser = do
-    time1 <- timeParser <|> timeParser2 <|> timeParser3
-    time2 <- timeParser <|> timeParser2 <|> timeParser3
+    time1 <- timeParser <|> timeParser2 <|> timeParser3 <|> timeParser4
+    time2 <- timeParser <|> timeParser2 <|> timeParser3 <|> timeParser4
     return (time1, time2)
 
 timezoneParser :: Parser Text
@@ -117,8 +117,6 @@ timeParser = do
     timezone <- timezoneParser <* char ' '
     year <- (boundedDecimal 3000) <* some endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
-    where
-        parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
 
 timeParser2 :: Parser DateTime
 timeParser2 = do
@@ -144,8 +142,20 @@ timeParser3 = do
     timezone <- timezoneParser <* char ' '
     year <- (boundedDecimal 3000) <* some endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) (convertHours ampm hour) minute second timezone year
-    where
-        parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
+
+timeParser4 :: Parser DateTime
+timeParser4 = do
+    day <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
+    date <- parseDate <* space
+    month <- DAT.takeWhile (inClass "a-zA-Z") <* char ' '
+    year <- (boundedDecimal 3000) <* char ' '
+    hour <- (boundedDecimal 24) <* char ':'
+    minute <- (boundedDecimal 60) <* char ':'
+    second <- (boundedDecimal 60) <* char ' '
+    timezone <- timezoneParser <* some endOfLine
+    return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
+
+parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
 
 boundedDecimal :: Int-> Parser Int
 boundedDecimal max = do
