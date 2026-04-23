@@ -3,7 +3,7 @@ import qualified Data.Attoparsec.Text.Lazy as DAT
 import Control.Applicative
 import System.Random
 import System.Environment
-import Data.Text.Lazy hiding (map, concatMap, foldl', length)
+import Data.Text.Lazy hiding (map, concatMap, foldl', length, show)
 import Data.List
 import Prelude hiding ((++), map, concatMap, unlines, length)
 import qualified Data.Text.Lazy.IO
