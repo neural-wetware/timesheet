@@ -43,5 +43,22 @@
           };
         }
       );
+
+      apps = forAllSystems (system: pkgs: hpkg:
+        {
+          default = {
+            type = "app";
+            program = "${self.packages.${system}.timesheet}/bin/timesheet";
+          };
+          test = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "run-tests" ''
+              echo "Running timesheet test suite..."
+              echo ""
+              exec ${pkgs.nix}/bin/nix develop --command ${hpkg.cabal-install}/bin/cabal test --test-show-details=streaming
+            '');
+          };
+        }
+      );
     };
 }
