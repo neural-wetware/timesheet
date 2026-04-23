@@ -8,6 +8,11 @@ import Data.List
 import Prelude hiding ((++), map, concatMap, unlines, length)
 import qualified Data.Text.Lazy.IO
 import Text.Printf
+import Data.Time.Calendar
+import Data.Time.Calendar.WeekDate
+import System.Directory (createDirectoryIfMissing)
+import qualified Data.Map.Strict as Map
+import qualified Data.Text
 
 template :: Log -> Text -> String
 template log id = Data.List.unlines [
@@ -19,16 +24,81 @@ logMinutes :: Log -> Int
 logMinutes logs = foldl' (+) 0 $ map entryMinutes logs
 
 entryMinutes :: LogEntry -> Int
-entryMinutes (LogEntry _ dts) = foldl' (+) 0 $ map intervalMinutes dts
+entryMinutes (LogEntry _ dts _) = foldl' (+) 0 $ map intervalMinutes dts
+
+-- Convert DateTime to Day for week calculations
+toDay :: DateTime -> Day
+toDay dt = fromGregorian (fromIntegral $ year dt) (monthToInt $ month dt) (date dt)
+    where monthToInt m = case unpack m of
+            "Jan" -> 1
+            "Feb" -> 2
+            "Mar" -> 3
+            "Apr" -> 4
+            "May" -> 5
+            "Jun" -> 6
+            "Jul" -> 7
+            "Aug" -> 8
+            "Sep" -> 9
+            "Oct" -> 10
+            "Nov" -> 11
+            "Dec" -> 12
+            _ -> 1
+
+-- Get the Monday of the week for a given DateTime
+getWeekStart :: DateTime -> Day
+getWeekStart dt = fromWeekDate y w 1
+    where day = toDay dt
+          (y, w, _) = toWeekDate day
+
+-- Group log entries by week
+groupByWeek :: Log -> Map.Map Day Log
+groupByWeek entries = foldl' addEntry Map.empty entries
+    where addEntry acc entry@(LogEntry _ times _) =
+            case times of
+                [] -> acc
+                ((t1, _):_) -> Map.insertWith (\new old -> old ++ new) weekStart [entry] acc
+                    where weekStart = getWeekStart t1
+
+-- Format week identifier for directory name (YYYY-MM-DD format)
+formatWeekDate :: Day -> String
+formatWeekDate day = printf "%04d-%02d-%02d" y m d
+    where (y, m, d) = toGregorian day
 
 main = do
-    gen <- getStdGen
-    ints <- randomInts gen
     [logFileName] <- getArgs
     logFile <- Data.Text.Lazy.IO.readFile $ logFileName
     case renderTemplate logFile of
-        (Left err) -> putStr $ "Error: " ++ err ++ "\n" -- TODO go to stderr
-        (Right log) -> putStr $ template log (Data.Text.Lazy.take 8 $ base32chars ints)
+        (Left err) -> putStr $ "Error: " ++ err ++ "\n"
+        (Right log) -> do
+            let weekGroups = Map.toList $ groupByWeek log
+            gens <- getStdGen >>= randomInts
+            let gensList = Data.List.take (Data.List.length weekGroups) $ chunksList 8 gens
+            mapM_ (\((weekStart, weekLog), weekGen) -> writeWeekFiles weekGen logFile weekStart weekLog)
+                  (Data.List.zip weekGroups gensList)
+            putStrLn $ "Generated " ++ show (Data.List.length weekGroups) ++ " week(s)"
+
+writeWeekFiles :: [Int] -> Text -> Day -> Log -> IO ()
+writeWeekFiles ints logFileContent weekStart weekLog = do
+    let weekId = Data.Text.Lazy.take 8 $ base32chars ints
+        dirName = formatWeekDate weekStart ++ "_" ++ unpack weekId
+        csvContent = template weekLog weekId
+        workLogContent = renderWorkLog weekLog
+
+    createDirectoryIfMissing True dirName
+    writeFile (dirName ++ "/timesheet.csv") csvContent
+    Data.Text.Lazy.IO.writeFile (dirName ++ "/work.log") workLogContent
+    putStrLn $ "Created: " ++ dirName
+
+chunksList :: Int -> [a] -> [[a]]
+chunksList _ [] = []
+chunksList n xs = Data.List.take n xs : chunksList n (Data.List.drop n xs)
+
+-- Extract work.log entries for a specific week
+renderWorkLog :: Log -> Text
+renderWorkLog weekLog = Data.Text.Lazy.intercalate (pack "\n\n") entryTexts `append` pack "\n"
+    where entryTexts = map extractEntry weekLog
+          extractEntry (LogEntry comment _ originalLines) =
+            Data.Text.Lazy.intercalate (pack "\n") (comment : originalLines)
 
 renderTemplate :: Text -> Either String Log
 renderTemplate logFile = eitherResult $ parse logParser logFile
@@ -37,7 +107,8 @@ type Log = [LogEntry]
 
 data LogEntry = LogEntry {
     comment :: Text,
-    times :: [(DateTime, DateTime)]
+    times :: [(DateTime, DateTime)],
+    originalLines :: [Text]
 } deriving Show
 
 data DateTime = DateTime {
@@ -64,7 +135,7 @@ renderHead :: String
 renderHead = "date, start, finish, total, description\n"
 
 renderEntry :: LogEntry -> String
-renderEntry (LogEntry comment ts) = concatMap (renderInterval1 comment) ts
+renderEntry (LogEntry comment ts _) = concatMap (renderInterval1 comment) ts
 
 renderInterval1 :: Text -> (DateTime, DateTime) -> String -- TODO check that dates match!!! -- TODO alter minutes based on rounding.
 renderInterval1 comment (t1, t2) = printf "%02d %s,%02d:%02d,%02d:%02d,%d:%02d,%s\n" day mon h1 m1 h2 m2 hours minutes (unpack comment)
@@ -88,14 +159,22 @@ logParser = ((some logEntryParser) <* endOfInput)
 logEntryParser :: Parser LogEntry
 logEntryParser = do
     comment <- takeTill ('\n' ==) <* endOfLine
-    times <- some timePairsParser
-    return $ LogEntry (fromStrict comment) times
+    timesAndLines <- some timePairsWithLinesParser
+    let (times, linesList) = Data.List.unzip timesAndLines
+    return $ LogEntry (fromStrict comment) times (Data.List.concat linesList)
 
 timePairsParser :: Parser (DateTime, DateTime)
 timePairsParser = do
     time1 <- timeParser <|> timeParser2 <|> timeParser3 <|> timeParser4
     time2 <- timeParser <|> timeParser2 <|> timeParser3 <|> timeParser4
     return (time1, time2)
+
+timePairsWithLinesParser :: Parser ((DateTime, DateTime), [Text])
+timePairsWithLinesParser = do
+    (line1, time1) <- DAT.match (timeParser <|> timeParser2 <|> timeParser3 <|> timeParser4)
+    (line2, time2) <- DAT.match (timeParser <|> timeParser2 <|> timeParser3 <|> timeParser4)
+    return ((time1, time2), [fromStrict $ stripEnd line1, fromStrict $ stripEnd line2])
+    where stripEnd = Data.Text.takeWhile (/= '\n')
 
 timezoneParser :: Parser Text
 timezoneParser = fmap fromStrict $ ((DAT.string $ toStrict $ pack "AEST") <|> (DAT.string $ toStrict $ pack "AEDT") <|> (DAT.string $ toStrict $ pack "EST"))

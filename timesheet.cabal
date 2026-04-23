@@ -12,5 +12,8 @@ executable timesheet
   build-depends:       base < 5,
                        attoparsec,
                        text,
-                       random
+                       random,
+                       time,
+                       containers,
+                       directory
   default-language:    Haskell2010
