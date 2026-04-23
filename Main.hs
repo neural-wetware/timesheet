@@ -10,9 +10,11 @@ import qualified Data.Text.Lazy.IO
 import Text.Printf
 import Data.Time.Calendar
 import Data.Time.Calendar.WeekDate
-import System.Directory (createDirectoryIfMissing)
+import Data.Time.Clock (getCurrentTime, utctDay)
+import System.Directory (createDirectoryIfMissing, copyFile)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text
+import Control.Monad (when)
 
 template :: Log -> Text -> String
 template log id = Data.List.unlines [
@@ -67,15 +69,43 @@ formatWeekDate day = printf "%04d-%02d-%02d" y m d
 main = do
     [logFileName] <- getArgs
     logFile <- Data.Text.Lazy.IO.readFile $ logFileName
+    today <- utctDay <$> getCurrentTime
+    let currentWeekStart = getCurrentWeekStart today
+
     case renderTemplate logFile of
         (Left err) -> putStr $ "Error: " ++ err ++ "\n"
-        (Right log) -> do
-            let weekGroups = Map.toList $ groupByWeek log
-            gens <- getStdGen >>= randomInts
-            let gensList = Data.List.take (Data.List.length weekGroups) $ chunksList 8 gens
-            mapM_ (\((weekStart, weekLog), weekGen) -> writeWeekFiles weekGen logFile weekStart weekLog)
-                  (Data.List.zip weekGroups gensList)
-            putStrLn $ "Generated " ++ show (Data.List.length weekGroups) ++ " week(s)"
+        (Right allEntries) -> do
+            let (currentWeekEntries, completedEntries) = partitionByWeek currentWeekStart allEntries
+                weekGroups = Map.toList $ groupByWeek completedEntries
+
+            when (not $ Data.List.null weekGroups) $ do
+                gens <- getStdGen >>= randomInts
+                let gensList = Data.List.take (Data.List.length weekGroups) $ chunksList 8 gens
+                mapM_ (\((weekStart, weekLog), weekGen) -> writeWeekFiles weekGen logFile weekStart weekLog)
+                      (Data.List.zip weekGroups gensList)
+                putStrLn $ "Generated " ++ show (Data.List.length weekGroups) ++ " week(s)"
+
+                -- Create backup and rewrite input file with current week entries only
+                let backupFileName = logFileName ++ ".bak"
+                copyFile logFileName backupFileName
+                putStrLn $ "Created backup: " ++ backupFileName
+
+                Data.Text.Lazy.IO.writeFile logFileName (renderWorkLog currentWeekEntries)
+                putStrLn $ "Updated " ++ logFileName ++ " (kept " ++ show (Data.List.length currentWeekEntries) ++ " current week entries)"
+
+            when (Data.List.null weekGroups) $
+                putStrLn "No completed weeks to process"
+
+getCurrentWeekStart :: Day -> Day
+getCurrentWeekStart day = fromWeekDate y w 1
+    where (y, w, _) = toWeekDate day
+
+partitionByWeek :: Day -> Log -> (Log, Log)
+partitionByWeek currentWeekStart entries =
+    Data.List.partition isCurrentWeek entries
+    where isCurrentWeek (LogEntry _ times _) = case times of
+            [] -> True  -- Keep incomplete entries in current week
+            ((t1, _):_) -> getWeekStart t1 == currentWeekStart
 
 writeWeekFiles :: [Int] -> Text -> Day -> Log -> IO ()
 writeWeekFiles ints logFileContent weekStart weekLog = do
@@ -159,9 +189,19 @@ logParser = ((some logEntryParser) <* endOfInput)
 logEntryParser :: Parser LogEntry
 logEntryParser = do
     comment <- takeTill ('\n' ==) <* endOfLine
-    timesAndLines <- some timePairsWithLinesParser
+    timesAndLines <- many timePairsWithLinesParser
+    -- Try to parse a single incomplete time line (no matching end time)
+    -- Only if we're not at a blank line (which would indicate end of entry)
+    incompleteLineOpt <- optional $ do
+        line <- takeTill ('\n' ==)
+        if Data.Text.null line
+            then fail "blank line"
+            else endOfLine >> return line
+    -- Consume trailing blank lines
+    _ <- many (endOfLine)
     let (times, linesList) = Data.List.unzip timesAndLines
-    return $ LogEntry (fromStrict comment) times (Data.List.concat linesList)
+        allLines = Data.List.concat linesList ++ maybe [] (\l -> [fromStrict l]) incompleteLineOpt
+    return $ LogEntry (fromStrict comment) times allLines
 
 timePairsParser :: Parser (DateTime, DateTime)
 timePairsParser = do
@@ -194,7 +234,7 @@ timeParser = do
     minute <- (boundedDecimal 60) <* char ':'
     second <- (boundedDecimal 60) <* char ' '
     timezone <- timezoneParser <* char ' '
-    year <- (boundedDecimal 3000) <* some endOfLine
+    year <- (boundedDecimal 3000) <* endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
 
 timeParser2 :: Parser DateTime
@@ -206,7 +246,7 @@ timeParser2 = do
     minute <- (boundedDecimal 60) <* char ':'
     second <- (boundedDecimal 60) <* char ' '
     timezone <- timezoneParser <* char ' '
-    year <- (boundedDecimal 3000) <* some endOfLine
+    year <- (boundedDecimal 3000) <* endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
 
 timeParser3 :: Parser DateTime
@@ -219,7 +259,7 @@ timeParser3 = do
     second <- (boundedDecimal 60) <* char ' '
     ampm <- ampmParser <* char ' '
     timezone <- timezoneParser <* char ' '
-    year <- (boundedDecimal 3000) <* some endOfLine
+    year <- (boundedDecimal 3000) <* endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) (convertHours ampm hour) minute second timezone year
 
 timeParser4 :: Parser DateTime
@@ -231,7 +271,7 @@ timeParser4 = do
     hour <- (boundedDecimal 24) <* char ':'
     minute <- (boundedDecimal 60) <* char ':'
     second <- (boundedDecimal 60) <* char ' '
-    timezone <- timezoneParser <* some endOfLine
+    timezone <- timezoneParser <* endOfLine
     return $ DateTime (fromStrict day) (fromStrict month) (read date) hour minute second timezone year
 
 parseDate = (char ' ' *> DAT.count 1 digit) <|> (DAT.count 2 digit)
